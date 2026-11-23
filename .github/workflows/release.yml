@@ -1,0 +1,43 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: 打包并发布
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 协议适配器测试
+        run: node scripts/adapter-test.mjs
+
+      - name: 组装安装包
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/pkg/linkSub-image-studio dist
+          cp -r package.json cordis.patch.yml index.js client.js icon.svg \
+                lib locale scripts docs README.md INSTALL.md LICENSE \
+                /tmp/pkg/linkSub-image-studio/
+          cd /tmp/pkg
+          zip -r "$GITHUB_WORKSPACE/dist/linkSub-image-studio-${GITHUB_REF_NAME}.zip" \
+              linkSub-image-studio
+          ls -l "$GITHUB_WORKSPACE/dist"
+
+      - name: 建 Release 并挂上 zip
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/linkSub-image-studio-${GITHUB_REF_NAME}.zip" \
+            --title "${GITHUB_REF_NAME} — 生图工坊" \
+            --notes-file .github/release-notes.md
