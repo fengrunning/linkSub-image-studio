@@ -18,11 +18,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/YOUR-GITHUB-NAME/linkSub-image-studio.git"
+    "url": "git+https://github.com/fengrunning/linkSub-image-studio.git"
   },
-  "homepage": "https://github.com/YOUR-GITHUB-NAME/linkSub-image-studio#readme",
+  "homepage": "https://github.com/fengrunning/linkSub-image-studio#readme",
   "bugs": {
-    "url": "https://github.com/YOUR-GITHUB-NAME/linkSub-image-studio/issues"
+    "url": "https://github.com/fengrunning/linkSub-image-studio/issues"
   },
   "exports": {
     ".": "./index.js",
