@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Image Studio",
+    "description": "Sidebar image studio: text-to-image and image-to-image over the models configured under Settings → Models, with protocol, aspect, resolution and count controls."
+  }
+}

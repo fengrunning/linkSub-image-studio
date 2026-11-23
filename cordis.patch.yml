@@ -1,0 +1,8 @@
+- insert:
+    - id: image-studio
+      name: '@local/dsh-plugin-image-studio'
+      config:
+        outputDir: outputs/images
+        timeoutMs: 180000
+        maxRetries: 3
+        historyLimit: 200

@@ -1,0 +1,57 @@
+{
+  "name": "@local/dsh-plugin-image-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "生图工坊: a sidebar image studio for DSH — text to image and image to image over the models configured in Settings",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "image-generation",
+    "text-to-image",
+    "image-to-image",
+    "openai-images",
+    "gemini",
+    "seedream"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YOUR-GITHUB-NAME/linkSub-image-studio.git"
+  },
+  "homepage": "https://github.com/YOUR-GITHUB-NAME/linkSub-image-studio#readme",
+  "bugs": {
+    "url": "https://github.com/YOUR-GITHUB-NAME/linkSub-image-studio/issues"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib/*.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "INSTALL.md",
+    "docs/*.md",
+    "scripts/*.mjs"
+  ],
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  }
+}
