@@ -7,13 +7,13 @@
  * browser page only submits parameters and renders the returned URLs.
  */
 
-import { mkdir, readFile, writeFile, stat } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, stat, appendFile } from 'node:fs/promises'
 import { join, resolve, extname, sep } from 'node:path'
 import { createHash } from 'node:crypto'
 
 import {
   EDIT_CAPABLE, PROTOCOLS, PROTOCOL_LABELS, RATIOS, RESOLUTIONS,
-  extensionOf, inferProtocol, parseAspect, readImageSize, requestJson, resolveSize, runProtocol,
+  download, extensionOf, inferProtocol, parseAspect, readImageSize, requestJson, resolveSize, runProtocol,
 } from './lib/generate.js'
 import { capabilitiesFor, filterRequest } from './lib/capabilities.js'
 
@@ -462,6 +462,109 @@ async function generate(ctx, config, input) {
 }
 
 /**
+ * Re-download upstream image URLs that a failed job already produced.
+ *
+ * Generation and transport are separate: a relay can hand back valid image URLs and still fail
+ * because the CDN dropped the transfer. This path takes those URLs and finishes the job without
+ * paying for another generation.
+ * @param config - resolved plugin configuration.
+ * @param input - `{ id?, urls, thread?, meta? }`; `meta` carries the original prompt/provider/model.
+ * @returns `{ record, failures }` where failures lists URLs that still refused to download.
+ */
+export async function redownload(config, input) {
+  const urls = (Array.isArray(input.urls) ? input.urls : [])
+    .filter((row) => typeof row === 'string' && /^https?:\/\//i.test(row))
+    .slice(0, 8)
+  if (urls.length === 0) throw new Error('没有可重下的直链')
+  const meta = input.meta !== null && typeof input.meta === 'object' ? input.meta : {}
+
+  const images = []
+  const failures = []
+  for (const url of urls) {
+    try {
+      images.push(await download(url, config.timeoutMs))
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error))
+    }
+  }
+  if (images.length === 0) throw new Error(failures[0] ?? '图片下载失败')
+
+  const id = createHash('sha256')
+    .update(`${input.id ?? ''}|${urls[0]}|${Date.now()}`)
+    .digest('hex').slice(0, 20)
+  const prompt = typeof meta.prompt === 'string' && meta.prompt.length > 0 ? meta.prompt : '手动重下'
+  const record = {
+    id,
+    thread: typeof input.thread === 'string' && input.thread.length > 0
+      ? input.thread
+      : (typeof meta.thread === 'string' && meta.thread.length > 0 ? meta.thread : 'main'),
+    title: threadTitle(prompt),
+    mode: typeof meta.mode === 'string' ? meta.mode : 'text-to-image',
+    protocol: typeof meta.protocol === 'string' ? meta.protocol : 'manual',
+    provider: typeof meta.provider === 'string' ? meta.provider : null,
+    providerName: typeof meta.providerName === 'string' ? meta.providerName
+      : (typeof meta.provider === 'string' ? meta.provider : null),
+    model: typeof meta.model === 'string' ? meta.model : null,
+    family: typeof meta.family === 'string' ? meta.family : null,
+    prompt,
+    negativePrompt: typeof meta.negativePrompt === 'string' ? meta.negativePrompt : '',
+    aspect: typeof meta.aspect === 'string' ? meta.aspect : null,
+    resolution: typeof meta.resolution === 'string' ? meta.resolution : null,
+    width: Number(meta.width) > 0 ? Number(meta.width) : null,
+    height: Number(meta.height) > 0 ? Number(meta.height) : null,
+    count: images.length,
+    quality: null,
+    outputFormat: null,
+    seed: null,
+    referenceCount: 0,
+    elapsedMs: 0,
+    createdAt: new Date().toISOString(),
+    retriedFrom: typeof input.id === 'string' ? input.id : null,
+    recovered: true,
+    images: [],
+  }
+  record.images = await persist(config.outputDir, record, images)
+  await appendHistory(config.outputDir, record, config.historyLimit)
+  return { record, failures }
+}
+
+/**
+ * Look up a remembered failure by job id (survives a Host restart).
+ * @param config - resolved plugin configuration.
+ * @param id - job id from the page.
+ * @returns the last matching `failed.jsonl` row, or undefined.
+ */
+async function findRemembered(config, id) {
+  if (typeof id !== 'string' || id.length === 0) return undefined
+  let text = ''
+  try {
+    text = await readFile(resolve(config.outputDir, 'failed.jsonl'), 'utf8')
+  } catch {
+    return undefined
+  }
+  const lines = text.trim().split('\n')
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index].length === 0) continue
+    try {
+      const row = JSON.parse(lines[index])
+      if (row?.id === id) return row
+    } catch { /* 坏行跳过 */ }
+  }
+  return undefined
+}
+
+/**
+ * Remember a failed job's upstream URLs so they survive a restart.
+ * @param config - resolved plugin configuration.
+ * @param entry - the summary to append.
+ */
+export function rememberFailure(config, entry) {
+  const line = JSON.stringify(entry) + '\n'
+  void appendFile(resolve(config.outputDir, 'failed.jsonl'), line).catch(() => {})
+}
+
+
+/**
  * Learn what one model actually accepts, in the only way a relay exposes it.
  *
  * There is no standard capabilities endpoint, so the probe combines the three
@@ -579,6 +682,7 @@ function jobSummary(job, withRecord) {
     startedAt: job.startedAt,
     elapsedMs: (job.finishedAt ?? Date.now()) - job.startedAt,
     error: job.error,
+    ...(Array.isArray(job.urls) && job.urls.length > 0 ? { urls: job.urls } : {}),
     ...(withRecord === true && job.record !== null
       ? {
         record: {
@@ -609,6 +713,22 @@ function startJob(ctx, config, input) {
     provider: typeof input.provider === 'string' ? input.provider : null,
     providerName: null,
     model: typeof input.model === 'string' ? input.model : null,
+    thread: typeof input.thread === 'string' && input.thread.length > 0 ? input.thread : 'main',
+    // 失败重下时用这些字段把记录补完整（参考图不存，只留张数）
+    meta: {
+      prompt: typeof input.prompt === 'string' ? input.prompt : '',
+      provider: typeof input.provider === 'string' ? input.provider : null,
+      providerName: null,
+      model: typeof input.model === 'string' ? input.model : null,
+      mode: Array.isArray(input.references) && input.references.length > 0 ? 'image-to-image' : 'text-to-image',
+      protocol: typeof input.protocol === 'string' ? input.protocol : 'auto',
+      aspect: typeof input.aspect === 'string' ? input.aspect : null,
+      resolution: typeof input.resolution === 'string' ? input.resolution : null,
+      width: Number(input.width) > 0 ? Number(input.width) : null,
+      height: Number(input.height) > 0 ? Number(input.height) : null,
+      negativePrompt: typeof input.negativePrompt === 'string' ? input.negativePrompt : '',
+      thread: typeof input.thread === 'string' && input.thread.length > 0 ? input.thread : 'main',
+    },
     startedAt: Date.now(),
     finishedAt: null,
     record: null,
@@ -622,9 +742,30 @@ function startJob(ctx, config, input) {
       job.provider = record.provider
       job.providerName = record.providerName
       job.model = record.model
+      job.meta.provider = record.provider
+      job.meta.providerName = record.providerName
+      job.meta.model = record.model
+      job.meta.family = record.family
+      job.meta.protocol = record.protocol
+      job.meta.aspect = record.aspect
+      job.meta.resolution = record.resolution
+      job.meta.width = record.width
+      job.meta.height = record.height
       job.status = 'succeeded'
     } catch (error) {
       job.error = error instanceof Error ? error.message : String(error)
+      // 图没下来时把原始直链留下来：既能在这个进程里手动重下，也落一份到 failed.jsonl 防止重启后丢
+      if (Array.isArray(error?.urls) && error.urls.length > 0) {
+        job.urls = error.urls
+        rememberFailure(config, {
+          id,
+          at: new Date().toISOString(),
+          error: job.error,
+          urls: error.urls,
+          thread: job.thread,
+          meta: job.meta,
+        })
+      }
       job.status = 'failed'
     } finally {
       job.finishedAt = Date.now()
@@ -722,6 +863,39 @@ export function apply(ctx, config) {
               .slice(0, 20)
               .map((job) => jobSummary(job))
             sendJson(res, 200, { ok: true, jobs: rows })
+            return
+          }
+          if (req.method === 'POST' && sub === '/retry-download') {
+            const raw = await readBody(req)
+            const input = JSON.parse(raw.length > 0 ? raw : '{}')
+            // 没带直链就回查内存里的 job；再不行去 failed.jsonl 里找
+            if (!Array.isArray(input.urls) || input.urls.length === 0) {
+              const known = typeof input.id === 'string' ? jobs.get(input.id) : undefined
+              if (known !== undefined) {
+                if (Array.isArray(known.urls)) input.urls = known.urls
+                if (input.meta === undefined) input.meta = known.meta
+                if (input.thread === undefined) input.thread = known.thread
+              }
+            }
+            if (!Array.isArray(input.urls) || input.urls.length === 0) {
+              // 进程重启过，内存里的 job 没了：翻 failed.jsonl
+              const remembered = await findRemembered(resolvedConfig, input.id)
+              if (remembered !== undefined) {
+                input.urls = remembered.urls
+                if (input.meta === undefined) input.meta = remembered.meta
+                if (input.thread === undefined) input.thread = remembered.thread
+              }
+            }
+            if (!Array.isArray(input.urls) || input.urls.length === 0) {
+              sendError(res, 400, '这个任务没有留下可重下的直链')
+              return
+            }
+            try {
+              const out = await redownload(resolvedConfig, input)
+              sendJson(res, 200, { ok: true, record: out.record, failures: out.failures })
+            } catch (error) {
+              sendError(res, 502, error instanceof Error ? error.message : String(error))
+            }
             return
           }
           if (req.method === 'POST' && sub === '/probe') {

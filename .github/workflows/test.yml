@@ -16,3 +16,7 @@ jobs:
           node-version: 20
       - name: 离线协议测试（本地假上游，不需要 key）
         run: node scripts/adapter-test.mjs
+      - name: 图片下载重试与超时（本地假 CDN）
+        run: node scripts/download-retry-test.mjs
+      - name: 失败任务手动重下
+        run: node scripts/retry-download-test.mjs
