@@ -124,6 +124,8 @@ node scripts/adapter-test.mjs
 | `HTTP 502 openai_error` | 中转侧渠道不可用，去中转后台看分组余额与渠道状态 |
 | `HTTP 400 invalid size` | 换更小的分辨率档，或换模型 |
 | 生成后磁盘找不到图 | 看 `cordis.patch.yml` 里的 `outputDir`，默认是 DSH 进程工作目录下的 `outputs/images/` |
+| 报 `图片下载失败（主机名）：原因` | 上游已经出图，只是图没下下来。结果卡片上有「手动重下」，只重拉直链、不重新生成 |
+| 报 `上游 300s 没有返回（超时）` | 中转分组排队，调大 `cordis.patch.yml` 的 `timeoutMs` 或换 provider |
 | 图片地址 404 | 文件名要从 `/api/image-gen/history` 里取，别自己拼 |
 
 ## 八、卸载

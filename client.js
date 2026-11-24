@@ -89,6 +89,11 @@ window.__ModuleLoader__.load({
         deleteConfirm: '确认删除',
         deleteHint: '从列表移除该会话，已生成的图片仍留在磁盘上',
         thread: '会话',
+        retryDownload: '手动重下',
+        retrying: '重下中',
+        copyLinks: '复制直链',
+        copied: '已复制',
+        retryHint: '图已经生成，只是没下下来；点这里直接重拉直链，不重新生成',
       },
       en: {
         panel: 'Image Studio',
@@ -154,6 +159,11 @@ window.__ModuleLoader__.load({
         deleteConfirm: 'Confirm delete',
         deleteHint: 'Removes the conversation from the list; generated files stay on disk',
         thread: 'Chat',
+        retryDownload: 'Retry download',
+        retrying: 'Downloading',
+        copyLinks: 'Copy links',
+        copied: 'Copied',
+        retryHint: 'The image was generated but never arrived; pull the link again without paying for another run',
       },
     }
 
@@ -226,7 +236,15 @@ window.__ModuleLoader__.load({
         }
         if (!body.ok) throw new Error(body.error?.message ?? 'job lookup failed')
         if (body.job.status === 'succeeded') return body.job.record ?? null
-        if (body.job.status === 'failed') throw new Error(body.job.error ?? 'generation failed')
+        if (body.job.status === 'failed') {
+          const failure = new Error(body.job.error ?? 'generation failed')
+          // 上游已经把图烤出来了，只是没下下来：把直链带出去，页面可以手动重下
+          if (Array.isArray(body.job.urls) && body.job.urls.length > 0) {
+            failure.urls = body.job.urls
+            failure.jobId = jobId
+          }
+          throw failure
+        }
       }
       throw new Error(LANG === 'zh' ? '生成超时' : 'generation timed out')
     }
@@ -594,6 +612,41 @@ window.__ModuleLoader__.load({
           }, `${seconds}s`)))
     }
 
+    /**
+     * 上游出图了但没下下来的那张：给一条直链 + 一个「手动重下」。
+     * @param props - `{ failed, retrying, onRetry, onCopy, copied }`.
+     */
+    function FailedCard(props) {
+      const target = props.failed
+      if (target === null) return null
+      const count = Array.isArray(target.urls) ? target.urls.length : 0
+      return h('div', {
+        style: {
+          borderRadius: 12, padding: '12px 14px',
+          border: '1px dashed var(--dsw-alias-state-warn-primary)',
+          background: 'var(--dsw-alias-bg-layer-1)',
+          display: 'flex', flexDirection: 'column', gap: 9,
+        },
+      },
+        h('div', {
+          style: { fontSize: 12.5, lineHeight: 1.6, color: 'var(--dsw-alias-label-primary)' },
+        }, `${t.text('retryHint')}（${count} 条直链）`),
+        h('div', {
+          style: {
+            fontSize: 11, lineHeight: 1.5, maxHeight: 60, overflow: 'hidden',
+            color: 'var(--dsw-alias-label-secondary)', wordBreak: 'break-all',
+            fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
+          },
+        }, target.urls.join('\n')),
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+          h(GhostButton, {
+            onClick: () => props.onRetry(target),
+            disabled: props.retrying,
+          }, props.retrying ? `${t.text('retrying')}…` : t.text('retryDownload')),
+          h(GhostButton, { onClick: () => props.onCopy(target.urls) },
+            props.copied ? t.text('copied') : t.text('copyLinks'))))
+    }
+
     /** The blank state shown before the first run. */
     function EmptyState() {
       return h('div', {
@@ -651,6 +704,10 @@ window.__ModuleLoader__.load({
       const [form, setForm] = useState(initialState)
       const [busy, setBusy] = useState(false)
       const [error, setError] = useState(null)
+      /** 上游已出图但没下下来的那次任务：{ id, urls, thread } */
+      const [failed, setFailed] = useState(null)
+      const [retrying, setRetrying] = useState(false)
+      const [copied, setCopied] = useState(false)
       const [records, setRecords] = useState([])
       const [threadId, setThreadId] = useState(() => {
         try { return localStorage.getItem(THREAD_KEY) ?? 'main' } catch { return 'main' }
@@ -1060,6 +1117,7 @@ window.__ModuleLoader__.load({
           : sentPrompt
         setBusy(true)
         setError(null)
+        setFailed(null)
         const submittingThread = threadId
         // The prompt leaves the composer at once and becomes a message in the stream.
         setPending({
@@ -1126,6 +1184,10 @@ window.__ModuleLoader__.load({
         } catch (failure) {
           if (activeThreadRef.current === submittingThread) {
             setError(failure instanceof Error ? failure.message : String(failure))
+            // 上游已出图、只是没下下来：给出「手动重下」，不重跑生成
+            if (Array.isArray(failure?.urls) && failure.urls.length > 0) {
+              setFailed({ id: failure.jobId ?? null, urls: failure.urls, thread: submittingThread })
+            }
           }
           localStorage.removeItem(JOB_KEY)
           // Hand the text and the references back so nothing is lost.
@@ -1141,6 +1203,58 @@ window.__ModuleLoader__.load({
           }
         }
       }, [form, scrollToBottom, busy, catalog, chain, records, threadId, loadThreads])
+
+      /**
+       * 重拉上游直链：不重新生成，只把图下到磁盘、写进历史。
+       * @param target - `{ id, urls, thread }`，来自失败任务。
+       */
+      const retryDownload = useCallback(async (target) => {
+        if (target === null || retrying) return
+        setRetrying(true)
+        setError(null)
+        try {
+          const response = await fetch(`${API}/retry-download`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: target.id,
+              urls: target.urls,
+              thread: target.thread ?? threadId,
+            }),
+          })
+          const body = await response.json()
+          if (!body.ok) throw new Error(body.error?.message ?? 'retry failed')
+          const record = body.record
+          if (record !== null && record !== undefined) {
+            setRecords((current) => (current.some((row) => row.id === record.id)
+              ? current
+              : [...current, record]))
+          }
+          if (Array.isArray(body.failures) && body.failures.length > 0) {
+            setError(body.failures.join(' / '))
+          } else {
+            setFailed(null)
+          }
+          void loadThreads()
+          requestAnimationFrame(scrollToBottom)
+        } catch (failure) {
+          setError(failure instanceof Error ? failure.message : String(failure))
+        } finally {
+          setRetrying(false)
+        }
+      }, [retrying, threadId, loadThreads, scrollToBottom])
+
+      /** 复制失败任务的直链，一行一条。 */
+      const copyFailedLinks = useCallback((urls) => {
+        const text = (Array.isArray(urls) ? urls : []).join('\n')
+        if (text.length === 0) return
+        try {
+          void navigator.clipboard.writeText(text)
+          setCopied(true)
+          setTimeout(() => setCopied(false), 1200)
+        } catch { /* 剪贴板不可用时忽略 */ }
+      }, [])
 
       const reuse = useCallback((record) => {
         const preset = PRESET_RATIOS.includes(record.aspect)
@@ -1515,6 +1629,13 @@ window.__ModuleLoader__.load({
           })),
           pending === null ? null : h(UserBubble, { record: pending }),
           pending === null ? null : h(PendingCard, { startedAt: pending.startedAt }),
+          h(FailedCard, {
+            failed,
+            retrying,
+            copied,
+            onRetry: retryDownload,
+            onCopy: copyFailedLinks,
+          }),
           error !== null
             ? h('div', {
               style: {
