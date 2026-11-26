@@ -1,9 +1,9 @@
 {
   "name": "@local/dsh-plugin-image-studio",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
-  "description": "生图工坊: a sidebar image studio for DSH — text to image and image to image over the models configured in Settings",
+  "description": "生图工坊: a sidebar image studio for DSH �?text to image and image to image over the models configured in Settings",
   "license": "MIT",
   "keywords": [
     "dsh",
