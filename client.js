@@ -33,7 +33,7 @@ window.__ModuleLoader__.load({
         otherModels: '其它模型',
         model: '模型',
         prompt: '提示词',
-        promptHint: '描述画面：主体、风格、光线、构图 · 可粘贴或拖入图片 · 回车生成',
+        promptHint: '描述画面：主体、风格、光线、构图 · 粘贴、拖入或点左下按钮上传图片 · 回车生成',
         negative: '负面提示词',
         negativeHint: '不想出现的内容',
         reference: '参考图',
@@ -103,7 +103,7 @@ window.__ModuleLoader__.load({
         otherModels: 'Other models',
         model: 'Model',
         prompt: 'Prompt',
-        promptHint: 'Subject, style, light · Paste or drop an image · Enter sends',
+        promptHint: 'Subject, style, light · Paste, drop, or use the button at left · Enter sends',
         negative: 'Negative prompt',
         negativeHint: 'What to leave out',
         reference: 'References',
@@ -731,6 +731,7 @@ window.__ModuleLoader__.load({
       const [, setTick] = useState(0)
       const streamRef = useRef(null)
       const promptRef = useRef(null)
+      const fileInput = useRef(null)
 
       const patch = useCallback((next) => { setForm((current) => ({ ...current, ...next })) }, [])
 
@@ -1356,11 +1357,12 @@ window.__ModuleLoader__.load({
                   type: 'button',
                   onClick: () => removeReference(index),
                   title: t.text('clearImage'),
+                  'aria-label': t.text('clearImage'),
                   style: {
-                    position: 'absolute', top: 0, right: 0, width: 16, height: 16,
+                    position: 'absolute', top: 0, right: 0, width: 22, height: 22,
                     padding: 0, border: 'none', cursor: 'pointer',
-                    borderRadius: '0 0 0 6px', background: 'rgba(0,0,0,0.45)',
-                    color: '#fff', fontSize: 11, lineHeight: '16px', fontFamily: 'inherit',
+                    borderRadius: '0 0 0 8px', background: 'rgba(0,0,0,0.5)',
+                    color: '#fff', fontSize: 13, lineHeight: '22px', fontFamily: 'inherit',
                   },
                 }, '×'))),
               h(GhostButton, { onClick: () => patch({ references: [] }) }, t.text('clearImage')),
@@ -1480,6 +1482,42 @@ window.__ModuleLoader__.load({
               borderTop: '1px solid var(--dsw-alias-border-l1)', paddingTop: 9,
             },
           },
+            // Touch devices have no Ctrl+V, so the picker stays as a button.
+            h('button', {
+              type: 'button',
+              onClick: () => fileInput.current?.click(),
+              title: t.text('addImage'),
+              'aria-label': t.text('addImage'),
+              style: {
+                width: 34, height: 34, borderRadius: 10, flex: '0 0 auto',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                cursor: 'pointer', padding: 0,
+                color: 'var(--dsw-alias-label-secondary)',
+                background: 'transparent',
+                border: '1px dashed var(--dsw-alias-border-l2)',
+              },
+            },
+              h('svg', {
+                width: 17, height: 17, viewBox: '0 0 24 24', fill: 'none',
+                stroke: 'currentColor', strokeWidth: 1.7,
+                strokeLinecap: 'round', strokeLinejoin: 'round',
+                'aria-hidden': true,
+              },
+                h('path', { d: 'M12 15.5V4' }),
+                h('path', { d: 'M8 7.5l4-3.5 4 3.5' }),
+                h('path', { d: 'M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3' }))),
+            h('input', {
+              ref: fileInput,
+              type: 'file',
+              accept: 'image/*',
+              multiple: true,
+              onChange: (event) => {
+                void addReferences([...(event.target.files ?? [])])
+                event.target.value = ''
+              },
+              style: { display: 'none' },
+            }),
+
             h('select', {
               value: currentKnown ? currentModel : '',
               onChange: (event) => {
@@ -1572,8 +1610,9 @@ window.__ModuleLoader__.load({
               onClick: submit,
               disabled: busy,
               title: `${t.text('generate')}  ·  Enter`,
+              'aria-label': t.text('generate'),
               style: {
-                width: 34, height: 34, borderRadius: '50%', border: 'none',
+                width: 38, height: 38, borderRadius: '50%', border: 'none',
                 flex: '0 0 auto', display: 'inline-flex',
                 alignItems: 'center', justifyContent: 'center',
                 cursor: busy ? 'default' : 'pointer',
