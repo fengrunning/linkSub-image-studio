@@ -1,9 +1,9 @@
 {
   "name": "@local/dsh-plugin-image-studio",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
-  "description": "生图工坊: a sidebar image studio for DSH �?text to image and image to image over the models configured in Settings",
+  "description": "生图工坊: a sidebar image studio for DSH, with text-to-image and image-to-image over the models configured in Settings",
   "license": "MIT",
   "keywords": [
     "dsh",
@@ -43,7 +43,9 @@
     "scripts/*.mjs"
   ],
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "immediately": true,

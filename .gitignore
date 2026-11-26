@@ -6,17 +6,15 @@ dist/
 outputs/
 *.zip
 
-# 编辑器与系统
+# 编辑器与系统文件
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
 
-# 日志
+# 日志与本地临时文件
 *.log
 npm-debug.log*
 pnpm-debug.log*
-
-# ������ʱ�ļ�
 *.tmp
 rabbit-bicycle.html
