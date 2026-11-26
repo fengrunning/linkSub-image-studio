@@ -16,3 +16,7 @@ Thumbs.db
 *.log
 npm-debug.log*
 pnpm-debug.log*
+
+# 本地临时文件
+*.tmp
+rabbit-bicycle.html

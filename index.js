@@ -553,14 +553,28 @@ async function findRemembered(config, id) {
   return undefined
 }
 
+/** Failed-job records kept on disk before the oldest are dropped. */
+const FAILED_LOG_LIMIT = 500
+
 /**
  * Remember a failed job's upstream URLs so they survive a restart.
+ *
+ * The log is capped: a broken relay can fail hundreds of runs, and an unbounded
+ * file would make the lookup at the end of every retry slower each time.
  * @param config - resolved plugin configuration.
  * @param entry - the summary to append.
  */
-export function rememberFailure(config, entry) {
-  const line = JSON.stringify(entry) + '\n'
-  void appendFile(resolve(config.outputDir, 'failed.jsonl'), line).catch(() => {})
+export async function rememberFailure(config, entry) {
+  const file = resolve(config.outputDir, 'failed.jsonl')
+  try {
+    await mkdir(resolve(config.outputDir), { recursive: true })
+    await appendFile(file, JSON.stringify(entry) + '\n')
+    const text = await readFile(file, 'utf8')
+    const lines = text.split('\n').filter((line) => line.trim().length > 0)
+    if (lines.length > FAILED_LOG_LIMIT) {
+      await writeFile(file, `${lines.slice(-FAILED_LOG_LIMIT).join('\n')}\n`)
+    }
+  } catch { /* a lost failure record must never break generation */ }
 }
 
 
@@ -868,30 +882,32 @@ export function apply(ctx, config) {
           if (req.method === 'POST' && sub === '/retry-download') {
             const raw = await readBody(req)
             const input = JSON.parse(raw.length > 0 ? raw : '{}')
-            // 没带直链就回查内存里的 job；再不行去 failed.jsonl 里找
-            if (!Array.isArray(input.urls) || input.urls.length === 0) {
-              const known = typeof input.id === 'string' ? jobs.get(input.id) : undefined
-              if (known !== undefined) {
-                if (Array.isArray(known.urls)) input.urls = known.urls
-                if (input.meta === undefined) input.meta = known.meta
-                if (input.thread === undefined) input.thread = known.thread
-              }
-            }
-            if (!Array.isArray(input.urls) || input.urls.length === 0) {
-              // 进程重启过，内存里的 job 没了：翻 failed.jsonl
+            // The Host only ever downloads what it recorded itself: first the live
+            // job, then the durable failure log. A URL supplied by the page is
+            // ignored, so this route can never be pointed at an arbitrary address.
+            let source
+            const known = typeof input.id === 'string' ? jobs.get(input.id) : undefined
+            if (known !== undefined && Array.isArray(known.urls) && known.urls.length > 0) {
+              source = known
+            } else {
               const remembered = await findRemembered(resolvedConfig, input.id)
-              if (remembered !== undefined) {
-                input.urls = remembered.urls
-                if (input.meta === undefined) input.meta = remembered.meta
-                if (input.thread === undefined) input.thread = remembered.thread
+              if (remembered !== undefined && Array.isArray(remembered.urls) && remembered.urls.length > 0) {
+                source = remembered
               }
             }
-            if (!Array.isArray(input.urls) || input.urls.length === 0) {
+            if (source === undefined) {
               sendError(res, 400, '这个任务没有留下可重下的直链')
               return
             }
             try {
-              const out = await redownload(resolvedConfig, input)
+              const out = await redownload(resolvedConfig, {
+                id: input.id,
+                urls: source.urls,
+                thread: typeof input.thread === 'string' && input.thread.length > 0
+                  ? input.thread
+                  : source.thread,
+                meta: source.meta,
+              })
               sendJson(res, 200, { ok: true, record: out.record, failures: out.failures })
             } catch (error) {
               sendError(res, 502, error instanceof Error ? error.message : String(error))
